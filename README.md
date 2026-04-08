@@ -4,11 +4,12 @@
 
 **Stop doing math at the dinner table.**
 
-[![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?style=flat-square&logo=mongodb&logoColor=white)](https://mongodb.com)
 [![Clerk](https://img.shields.io/badge/Auth-Clerk-6C47FF?style=flat-square)](https://clerk.com)
 [![OpenAI](https://img.shields.io/badge/OCR-GPT--4o--mini-412991?style=flat-square&logo=openai&logoColor=white)](https://openai.com)
+[![Nodemailer](https://img.shields.io/badge/Email-Nodemailer-22B573?style=flat-square)](https://nodemailer.com)
 
 </div>
 
@@ -18,7 +19,7 @@
 
 **SplitMoney** is a collaborative bill-splitting app built for groups who eat together, shop together, or travel together — and need to figure out who owes what without pulling out a calculator.
 
-Snap a receipt. Items are extracted automatically. Assign them to people. Done.
+Snap a receipt. Items are extracted automatically. Assign them to people. Everyone gets emailed their share. Done.
 
 > You ordered the steak → you pay for the steak.
 > Everyone shared the appetizer → everyone splits it equally.
@@ -40,6 +41,9 @@ Assign specific items to specific people, or leave items unassigned to split the
 ### 📊 Live Per-Person Breakdown
 See exactly what each person owes — with a visual progress bar — before you even save the bill. No surprises when you hit submit.
 
+### 📧 Automatic Email Notifications
+Every time a bill is created or updated, all team members automatically receive a beautiful email showing their personal share, the bill details, and a direct link to view the full breakdown. Two distinct email styles — green for new bills, blue for updates.
+
 ---
 
 ## Tech Stack
@@ -52,6 +56,7 @@ See exactly what each person owes — with a visual progress bar — before you 
 | Database | MongoDB + Mongoose |
 | UI | shadcn/ui + Tailwind CSS |
 | OCR | OpenAI GPT-4o-mini Vision |
+| Email | Nodemailer |
 | Data Fetching | SWR |
 | Notifications | Sonner |
 
@@ -65,6 +70,7 @@ See exactly what each person owes — with a visual progress bar — before you 
 - A MongoDB Atlas cluster (free tier works)
 - A Clerk account (free tier works)
 - An OpenAI API key
+- An SMTP email account (Gmail with App Password, or any SMTP provider)
 
 ### 1. Clone & Install
 
@@ -79,15 +85,33 @@ npm install
 Create a `.env.local` file in the root and add the following:
 
 ```env
+# Clerk
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
 NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
 NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
 NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/dashboard
 NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/dashboard
+
+# MongoDB
 MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/splitmoney
+
+# OpenAI
 OPENAI_API_KEY=sk-...
+
+# Email (SMTP)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=you@gmail.com
+SMTP_PASS=your-app-password
+SMTP_FROM=SplitMoney <you@gmail.com>
+
+# App
+NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
+
+> **Gmail users:** Generate an App Password at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) (requires 2FA enabled). For production, consider Resend, Postmark, or SendGrid.
 
 ### 3. Run
 
@@ -109,12 +133,17 @@ Open [http://localhost:3000](http://localhost:3000).
 4. **Assign items** to specific members by clicking their avatars, or leave unassigned to split equally
 5. **Live preview** shows each person's exact share (including tax) before saving
 6. **Save** — SplitMoney stores the full breakdown per person in the database
+7. **Emails sent** — every team member receives a personalised email with their exact amount owed
 
 ### Tax Calculation
 
 Tax is applied **per item, before splitting**. So if two people share a $20 taxable item, each pays their share of $22.60 — not $10 plus tax calculated separately. This mirrors how real receipts work.
 
 Items marked with `H` on Canadian receipts are automatically flagged as HST-taxable (13%) by the OCR.
+
+### Email Notifications
+
+Emails are sent **concurrently and non-blocking** — if an email fails, the bill still saves successfully. Each email is personalised per member and includes their name, exact dollar amount, percentage of the total bill, a progress bar visualising their share, and a direct link to the bill.
 
 ---
 
@@ -142,9 +171,9 @@ Items marked with `H` on Canadian receipts are automatically flagged as HST-taxa
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/teams/:teamId/bills` | Get all bills for a team |
-| `POST` | `/api/teams/:teamId/bills` | Create a bill (auto-calculates splits) |
+| `POST` | `/api/teams/:teamId/bills` | Create a bill (auto-calculates splits + sends emails) |
 | `GET` | `/api/teams/:teamId/bills/:billId` | Get bill detail |
-| `PUT` | `/api/teams/:teamId/bills/:billId` | Update bill (recalculates splits) |
+| `PUT` | `/api/teams/:teamId/bills/:billId` | Update bill (recalculates splits + sends emails) |
 | `DELETE` | `/api/teams/:teamId/bills/:billId` | Delete a bill |
 
 ### OCR
