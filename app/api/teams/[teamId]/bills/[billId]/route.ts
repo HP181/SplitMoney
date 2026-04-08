@@ -1,8 +1,10 @@
+// app/api/teams/[teamId]/bills/[billId]/route.ts
+import { sendBillEmails } from '@/lib/email';
+import Bill from '@/lib/models/Bill';
+import Team from '@/lib/models/Team';
+import connectDB from '@/lib/mongodb';
 import { auth } from '@clerk/nextjs/server'
-import { NextRequest, NextResponse } from 'next/server'
-import connectDB from '@/lib/mongodb'
-import Team from '@/lib/models/Team'
-import Bill from '@/lib/models/Bill'
+import { NextRequest, NextResponse } from 'next/server';
 
 const TAX_RATE = 0.13
 
@@ -15,11 +17,7 @@ function calculateBill(items: { name: string; price: number; hasTax: boolean; as
     const totalPrice = item.price + taxAmount
     subtotal += item.price
     totalTax += taxAmount
-    return {
-      ...item,
-      taxAmount,
-      totalPrice,
-    }
+    return { ...item, taxAmount, totalPrice }
   })
 
   return {
@@ -35,23 +33,16 @@ function calculateMemberShares(
   members: { clerkId: string; email: string; firstName?: string; lastName?: string }[]
 ) {
   const shares: Record<string, number> = {}
-
-  members.forEach((m) => {
-    shares[m.clerkId] = 0
-  })
+  members.forEach((m) => { shares[m.clerkId] = 0 })
 
   items.forEach((item) => {
     if (item.assignedTo.length === 0) {
       const perPerson = item.totalPrice / members.length
-      members.forEach((m) => {
-        shares[m.clerkId] += perPerson
-      })
+      members.forEach((m) => { shares[m.clerkId] += perPerson })
     } else {
       const perPerson = item.totalPrice / item.assignedTo.length
       item.assignedTo.forEach((clerkId) => {
-        if (shares[clerkId] !== undefined) {
-          shares[clerkId] += perPerson
-        }
+        if (shares[clerkId] !== undefined) shares[clerkId] += perPerson
       })
     }
   })
@@ -76,20 +67,14 @@ export async function GET(
     }
 
     const { teamId, billId } = await params
-
     await connectDB()
 
-    const team = await Team.findOne({
-      _id: teamId,
-      'members.clerkId': userId,
-    })
-
+    const team = await Team.findOne({ _id: teamId, 'members.clerkId': userId })
     if (!team) {
       return NextResponse.json({ error: 'Team not found' }, { status: 404 })
     }
 
     const bill = await Bill.findOne({ _id: billId, teamId })
-
     if (!bill) {
       return NextResponse.json({ error: 'Bill not found' }, { status: 404 })
     }
@@ -117,17 +102,12 @@ export async function PUT(
 
     await connectDB()
 
-    const team = await Team.findOne({
-      _id: teamId,
-      'members.clerkId': userId,
-    })
-
+    const team = await Team.findOne({ _id: teamId, 'members.clerkId': userId })
     if (!team) {
       return NextResponse.json({ error: 'Team not found' }, { status: 404 })
     }
 
     const bill = await Bill.findOne({ _id: billId, teamId })
-
     if (!bill) {
       return NextResponse.json({ error: 'Bill not found' }, { status: 404 })
     }
@@ -136,9 +116,11 @@ export async function PUT(
     if (description !== undefined) bill.description = description
     if (receiptUrl !== undefined) bill.receiptUrl = receiptUrl
 
+    let memberShares = bill.memberShares
+
     if (items && items.length > 0) {
       const calculated = calculateBill(items)
-      const memberShares = calculateMemberShares(calculated.items, team.members)
+      memberShares = calculateMemberShares(calculated.items, team.members)
 
       bill.items = calculated.items
       bill.subtotal = calculated.subtotal
@@ -148,6 +130,22 @@ export async function PUT(
     }
 
     await bill.save()
+
+    // Send emails to all members (non-blocking)
+    sendBillEmails({
+      type: 'updated',
+      teamName: team.name,
+      billName: bill.name,
+      billId: bill._id.toString(),
+      teamId,
+      grandTotal: bill.grandTotal,
+      memberShares: memberShares.map((s: { email: string; firstName?: string; lastName?: string; amount: number }) => ({
+        email: s.email,
+        firstName: s.firstName,
+        lastName: s.lastName,
+        amount: s.amount,
+      })),
+    }).catch((err) => console.error('Email sending failed:', err))
 
     return NextResponse.json({ bill })
   } catch (error) {
@@ -167,20 +165,14 @@ export async function DELETE(
     }
 
     const { teamId, billId } = await params
-
     await connectDB()
 
-    const team = await Team.findOne({
-      _id: teamId,
-      'members.clerkId': userId,
-    })
-
+    const team = await Team.findOne({ _id: teamId, 'members.clerkId': userId })
     if (!team) {
       return NextResponse.json({ error: 'Team not found' }, { status: 404 })
     }
 
     const bill = await Bill.findOneAndDelete({ _id: billId, teamId })
-
     if (!bill) {
       return NextResponse.json({ error: 'Bill not found' }, { status: 404 })
     }

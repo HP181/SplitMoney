@@ -1,12 +1,16 @@
+// app/api/teams/[teamId]/bills/route.ts
+import { sendBillEmails } from '@/lib/email'
+import Bill from '@/lib/models/Bill'
+import Team from '@/lib/models/Team'
+import connectDB from '@/lib/mongodb'
 import { auth } from '@clerk/nextjs/server'
 import { NextRequest, NextResponse } from 'next/server'
-import connectDB from '@/lib/mongodb'
-import Team from '@/lib/models/Team'
-import Bill from '@/lib/models/Bill'
 
 const TAX_RATE = 0.13
 
-function calculateBill(items: { name: string; price: number; hasTax: boolean; assignedTo: string[] }[]) {
+function calculateBill(
+  items: { name: string; price: number; hasTax: boolean; assignedTo: string[] }[]
+) {
   let subtotal = 0
   let totalTax = 0
 
@@ -15,11 +19,7 @@ function calculateBill(items: { name: string; price: number; hasTax: boolean; as
     const totalPrice = item.price + taxAmount
     subtotal += item.price
     totalTax += taxAmount
-    return {
-      ...item,
-      taxAmount,
-      totalPrice,
-    }
+    return { ...item, taxAmount, totalPrice }
   })
 
   return {
@@ -35,25 +35,16 @@ function calculateMemberShares(
   members: { clerkId: string; email: string; firstName?: string; lastName?: string }[]
 ) {
   const shares: Record<string, number> = {}
-
-  members.forEach((m) => {
-    shares[m.clerkId] = 0
-  })
+  members.forEach((m) => { shares[m.clerkId] = 0 })
 
   items.forEach((item) => {
     if (item.assignedTo.length === 0) {
-      // Split among all members if not assigned
       const perPerson = item.totalPrice / members.length
-      members.forEach((m) => {
-        shares[m.clerkId] += perPerson
-      })
+      members.forEach((m) => { shares[m.clerkId] += perPerson })
     } else {
-      // Split among assigned members
       const perPerson = item.totalPrice / item.assignedTo.length
       item.assignedTo.forEach((clerkId) => {
-        if (shares[clerkId] !== undefined) {
-          shares[clerkId] += perPerson
-        }
+        if (shares[clerkId] !== undefined) shares[clerkId] += perPerson
       })
     }
   })
@@ -81,17 +72,12 @@ export async function GET(
 
     await connectDB()
 
-    const team = await Team.findOne({
-      _id: teamId,
-      'members.clerkId': userId,
-    })
-
+    const team = await Team.findOne({ _id: teamId, 'members.clerkId': userId })
     if (!team) {
       return NextResponse.json({ error: 'Team not found' }, { status: 404 })
     }
 
     const bills = await Bill.find({ teamId }).sort({ createdAt: -1 })
-
     return NextResponse.json({ bills })
   } catch (error) {
     console.error('Error fetching bills:', error)
@@ -119,11 +105,7 @@ export async function POST(
 
     await connectDB()
 
-    const team = await Team.findOne({
-      _id: teamId,
-      'members.clerkId': userId,
-    })
-
+    const team = await Team.findOne({ _id: teamId, 'members.clerkId': userId })
     if (!team) {
       return NextResponse.json({ error: 'Team not found' }, { status: 404 })
     }
@@ -143,6 +125,22 @@ export async function POST(
       memberShares,
       createdBy: userId,
     })
+
+    // Send emails to all members (non-blocking — don't await, don't fail the request)
+    sendBillEmails({
+      type: 'created',
+      teamName: team.name,
+      billName: name,
+      billId: bill._id.toString(),
+      teamId,
+      grandTotal: calculated.grandTotal,
+      memberShares: memberShares.map((s) => ({
+        email: s.email,
+        firstName: s.firstName,
+        lastName: s.lastName,
+        amount: s.amount,
+      })),
+    }).catch((err) => console.error('Email sending failed:', err))
 
     return NextResponse.json({ bill }, { status: 201 })
   } catch (error) {
